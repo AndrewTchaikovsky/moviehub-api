@@ -1,15 +1,20 @@
 package com.moviehub.handler;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.moviehub.exceptions.ValidationException;
 import com.moviehub.model.Movie;
 import com.moviehub.storage.MovieRepository;
 import com.sun.net.httpserver.HttpExchange;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 
 public class MoviesHandler extends BaseHttpHandler {
-    private final MovieRepository repo =  new MovieRepository();
+    private final MovieRepository repo = new MovieRepository();
 
     @Override
     public void handle(HttpExchange ex) throws IOException {
@@ -21,34 +26,52 @@ public class MoviesHandler extends BaseHttpHandler {
             } else if (method.equalsIgnoreCase("POST")) {
                 handlePost(ex);
             } else {
-                sendJson(ex, 405, "{\"error\":\"Method Not Allowed\"}");
+                sendJson(ex, 405, "{\"error\":\"Такого метода не существует\"}");
             }
         } catch (Exception e) {
-            sendJson(ex, 500, "{\"error\":\"Internal Server Error\"}");
+            sendJson(ex, 500, "{\"error\":\"Внутренняя ошибка сервера\"}");
         }
     }
 
     private void handlePost(HttpExchange ex) throws IOException {
-        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-
-        if (!body.contains("\"title\"") || !body.contains("\"year\"")) {
-            sendJson(ex, 422, "{\"error\":\"Invalid JSON\"}");
+        try {
+            requireJsonContentType(ex);
+        } catch (IllegalStateException e) {
             return;
         }
 
-        String title = body.split("\"title\"\\s*:\\s*\"")[1].split("\"")[0];
+        String body = readBody(ex);
 
-        if (title.isBlank() || title.length() > 100) {
-            sendJson(ex, 422, """
+        String title;
+        int year;
+
+        try {
+            title = extractTitle(body);
+            year = extractYear(body);
+        } catch (IllegalArgumentException e) {
+            sendJson(ex, 400, """
                     {
-                    "error": "Ошибка валидации",
-                    "details": ["название не должно быть пустым или длиннее 100 символов"]
+                    "error": "Неверный JSON"
                     }
                     """);
             return;
         }
 
-        int year = Integer.parseInt(body.split("\"year\"\\s*:\\s*")[1].split("[^0-9]")[0]);
+        try {
+            validateMovie(title, year);
+        } catch (ValidationException e) {
+            String details = e.getErrors().stream()
+                    .map(s -> "\"" + s + "\"")
+                    .collect(Collectors.joining(", "));
+
+            sendJson(ex, 422, """
+                    {
+                    "error": "Ошибка валидации",
+                    "details": [%s]
+                    }
+                    """.formatted(details));
+            return;
+        }
 
         Movie movie = new Movie();
         movie.title = title;
@@ -62,6 +85,71 @@ public class MoviesHandler extends BaseHttpHandler {
         );
 
         sendJson(ex, 201, json);
+    }
+
+    protected String readBody(HttpExchange ex) throws IOException {
+        return new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).trim();
+    }
+
+    protected void requireJsonContentType(HttpExchange ex) throws IOException {
+        String contentType = ex.getRequestHeaders().getFirst("Content-Type");
+
+        if (contentType == null || !contentType.equalsIgnoreCase("application/json")) {
+            sendJson(ex, 415, """
+                    {
+                    "error": "Этот тип данных не поддерживается"
+                    }
+                    """);
+            throw new IllegalStateException();
+        }
+    }
+
+    private String extractTitle(String body) throws IllegalArgumentException {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(body);
+            if (!node.has("title") || node.get("title").isNull()) {
+                throw new IllegalArgumentException("нет названия");
+            }
+            return node.get("title").asText();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("title");
+        }
+    }
+
+    private int extractYear(String body) throws IllegalArgumentException {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(body);
+            if (!node.has("year") || node.get("year").isNull()) {
+                throw new IllegalArgumentException("нет года");
+            }
+            return node.get("year").asInt();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("year");
+        }
+    }
+
+    private void validateMovie(String title, int year) throws ValidationException {
+        List<String> errors = new ArrayList<>();
+
+        if (title == null || title.isBlank()) {
+            errors.add("название не должно быть пустым");
+        }
+
+        if (title != null && title.length() > 100) {
+            errors.add("название не должно превышать 100 символов");
+        }
+
+        int maxYear = java.time.Year.now().getValue() + 1;
+
+        if (year < 1888 || year > maxYear) {
+            errors.add("год должен быть между 1888 и " + maxYear);
+        }
+
+        if (!errors.isEmpty()) {
+            throw new ValidationException(errors);
+        }
     }
 
     private void handleGet(HttpExchange ex) throws IOException {

@@ -11,7 +11,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,6 +19,15 @@ public class MoviesApiTest {
     private static final String BASE = "http://localhost:8080"; // !!! добавьте базовую часть URL
     private static MoviesServer server;
     private static HttpClient client;
+
+    private HttpResponse<String> post(String json) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
+    }
 
     @BeforeAll
     static void beforeAll() {
@@ -68,13 +76,7 @@ public class MoviesApiTest {
                 }
                 """;
 
-        HttpRequest post = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
-
-        HttpResponse<String> postResp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> postResp = post(json);
 
         assertEquals(201, postResp.statusCode());
 
@@ -99,15 +101,11 @@ public class MoviesApiTest {
                 }
         """;
 
-        HttpRequest post = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
 
-        HttpResponse<String> resp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-        assertEquals(422, resp.statusCode());
+        HttpResponse<String> resp = post(json);
+
+        assertEquals(422, resp.statusCode(), "Пустое название должно приводить к 422");
     }
 
     @Test
@@ -121,17 +119,115 @@ public class MoviesApiTest {
                 }
         """, longTitle);
 
-        HttpRequest post = HttpRequest.newBuilder()
+
+        HttpResponse<String> resp = post(json);
+
+        assertEquals(422, resp.statusCode(), "Название длиннее 100 символов должно приводить к 422");
+    }
+
+    @Test
+    void postMovie_whenYearIsTooEarly_return422() throws Exception {
+        String json = """
+                {
+                "title": "Начало",
+                "year": 1800
+                }
+        """;
+
+
+        HttpResponse<String> resp = post(json);
+
+        assertEquals(422, resp.statusCode(), "Год меньше 1888 должен приводить к 422");
+    }
+
+    @Test
+    void postMovie_whenYearIsInFuture_return422() throws Exception {
+        int futureYear = java.time.Year.now().getValue() + 2;
+
+        String json = String.format("""
+                {
+                "title": "Начало",
+                "year": %d
+                }
+        """,  futureYear);
+
+
+        HttpResponse<String> resp = post(json);
+
+        assertEquals(422, resp.statusCode(), "Год больше текущего года + 1 должен приводить к 422");
+    }
+
+    @Test
+    void postMovie_whenContentTypeIsNotJson_return415() throws Exception {
+        String json = """
+                {
+                "title": "Начало",
+                "year": 2010
+                }
+        """;
+
+        HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(BASE + "/movies"))
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "text/plain") // ставим неверный Content-Type
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
 
-        HttpResponse<String> resp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(415, resp.statusCode(), "Неверный Content-Type должен приводить к 415");
+    }
+
+    @Test
+    void postMovie_whenJsonIsMalformed_return400() throws Exception {
+        String badJson = """
+                {
+                "title": "Начало",
+                "year": 2010"
+        """; // намеренно пропускаем закрывающуюся скобку, чтобы формат json был неверным
+
+
+        HttpResponse<String> resp = post(badJson);
+
+        assertEquals(400, resp.statusCode(), "Некорректный JSON должен приводить к 400");
+    }
+
+    @Test
+    void postMovie_withoutJsonContentType_return415() throws Exception {
+        String json = """
+                {
+                "title": "Начало",
+                "year": 2010
+                }
+                """;
+
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                // намеренно пропускаем Content-Type
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(415, resp.statusCode(), "Отсутствующий Content-Type должен приводить к 415");
+    }
+
+    @Test
+    void postMovie_whenMultipleErrors_returnAllDetails() throws Exception {
+        String json = """
+                {
+                "title": "",
+                "year": 3000
+                }
+                """;
+
+        HttpResponse<String> resp = post(json);
+
+        int maxYear = java.time.Year.now().getValue() + 1;
 
         assertEquals(422, resp.statusCode());
-
-
+        assertTrue(resp.body().contains("название не должно быть пустым"));
+        assertTrue(resp.body().contains("год должен быть между 1888 и " + maxYear));
     }
 
 }
