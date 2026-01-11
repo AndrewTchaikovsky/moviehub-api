@@ -58,4 +58,80 @@ public class MoviesApiTest {
         assertTrue(body.startsWith("[") && body.endsWith("]"),
                 "Ожидается JSON-массив");
     }
+
+    @Test
+    void postMovie_thenGetMovies_returnsMovies() throws Exception {
+        String json = """
+                {
+                "title": "Начало",
+                "year": 2010
+                }
+                """;
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> postResp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(201, postResp.statusCode());
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                .GET()
+                .build();
+
+        HttpResponse<String> respGet = client.send(get, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(200, respGet.statusCode());
+        assertTrue(respGet.body().contains("Начало"));
+    }
+
+
+    @Test
+    void postMovie_whenTitleIsEmpty_return422() throws Exception {
+        String json = """
+                {
+                "title": "",
+                "year": 2010
+                }
+        """;
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> resp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(422, resp.statusCode());
+    }
+
+    @Test
+    void postMovie_whenTitleIsTooLong_return422() throws Exception {
+        String longTitle = "A".repeat(101);
+
+        String json = String.format("""
+                {
+                "title": "%s",
+                "year": 2010
+                }
+        """, longTitle);
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> resp = client.send(post, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(422, resp.statusCode());
+
+
+    }
+
 }
