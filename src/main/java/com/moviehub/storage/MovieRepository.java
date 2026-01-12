@@ -19,4 +19,18 @@ public class MovieRepository {
     public Collection<Movie> findAll() {
         return movies.values();
     }
+
+    public Movie findById(Long id) {
+        return movies.get(id);
+    }
+
+    public boolean deleteById(Long id) {
+        return movies.remove(id) != null;
+    }
+
+    public Collection<Movie> findByYear(int year) {
+        return movies.values().stream()
+                .filter(m -> m.year == year)
+                .toList();
+    }
 }

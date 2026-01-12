@@ -25,6 +25,8 @@ public class MoviesHandler extends BaseHttpHandler {
                 handleGet(ex);
             } else if (method.equalsIgnoreCase("POST")) {
                 handlePost(ex);
+            } else if(method.equalsIgnoreCase("DELETE")) {
+              handleDelete(ex);
             } else {
                 sendJson(ex, 405, "{\"error\":\"Такого метода не существует\"}");
             }
@@ -153,12 +155,112 @@ public class MoviesHandler extends BaseHttpHandler {
     }
 
     private void handleGet(HttpExchange ex) throws IOException {
+        String query = ex.getRequestURI().getQuery();
+
+        if (query != null && query.startsWith("year=")) {
+            handleGetByYear(ex, query);
+            return;
+        }
+
+        String path = ex.getRequestURI().getPath();
+        String[] parts = path.split("/");
+
+        if (parts.length == 2) {
+            handleGetAll(ex);
+            return;
+        }
+
+        if (parts.length == 3) {
+            handleGetById(ex, parts[2]);
+            return;
+        }
+
+        sendJson(ex, 404, "{\"error\":\"Не найдено\"}");
+    }
+
+    private void handleGetAll(HttpExchange ex) throws IOException {
         String json = repo.findAll().stream()
                 .map(m -> String.format(
                         "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
                         m.id, m.title, m.year))
                 .collect(Collectors.joining(",", "[", "]"));
         sendJson(ex, 200, json);
+    }
+
+    private void handleGetById(HttpExchange ex, String idStr) throws IOException {
+        long id;
+
+        try{
+            id = Long.parseLong(idStr);
+        } catch (NumberFormatException e) {
+            sendJson(ex, 400, "{\"error\":\"Некорректный ID\"}");
+            return;
+        }
+
+        Movie movie = repo.findById(id);
+
+        if (movie == null) {
+            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            return;
+        }
+
+        String json = String.format(
+                "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
+                movie.id, movie.title, movie.year
+        );
+
+        sendJson(ex, 200, json);
+    }
+
+    private void handleGetByYear(HttpExchange ex, String query) throws IOException {
+        int year;
+
+        try {
+            year = Integer.parseInt(query.substring("year=".length()));
+        } catch (NumberFormatException e) {
+            sendJson(ex, 400, "{\"error\":\"Некорректный параметр запроса - 'year'\"}");
+            return;
+        }
+
+        String json = repo.findByYear(year).stream()
+                .map(m -> String.format(
+                        "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
+                        m.id, m.title, m.year))
+                .collect(Collectors.joining(",", "[", "]"));
+
+        sendJson(ex, 200, json);
+    }
+
+    private void handleDelete(HttpExchange ex) throws IOException {
+        String path = ex.getRequestURI().getPath();
+        String[] parts = path.split("/");
+
+        if (parts.length != 3) {
+            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            return;
+        }
+
+        long id;
+        try {
+            id = Long.parseLong(parts[2]);
+        } catch (NumberFormatException e) {
+            sendJson(ex, 400, "{\"error\":\"Некорректный ID\"}");
+            return;
+        }
+
+        boolean deleted = repo.deleteById(id);
+
+        if (!deleted) {
+            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            return;
+        }
+
+        sendNoContent(ex);
+    }
+
+    protected void sendNoContent(HttpExchange ex) throws IOException {
+        ex.getResponseHeaders().set("Content-Type", "application/json");
+        ex.sendResponseHeaders(204, -1);
     }
 
 }
