@@ -14,7 +14,12 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class MoviesHandler extends BaseHttpHandler {
-    private final MovieRepository repo = new MovieRepository();
+    private static final MovieRepository repo = new MovieRepository();
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    public static MovieRepository getRepository() {
+        return repo;
+    }
 
     @Override
     public void handle(HttpExchange ex) throws IOException {
@@ -25,13 +30,14 @@ public class MoviesHandler extends BaseHttpHandler {
                 handleGet(ex);
             } else if (method.equalsIgnoreCase("POST")) {
                 handlePost(ex);
-            } else if(method.equalsIgnoreCase("DELETE")) {
-              handleDelete(ex);
+            } else if (method.equalsIgnoreCase("DELETE")) {
+                handleDelete(ex);
             } else {
-                sendJson(ex, 405, "{\"error\":\"Такого метода не существует\"}");
+                ex.getResponseHeaders().set("Allow", "GET,POST,DELETE");
+                sendError(ex, 405, "Метод не поддерживается");
             }
         } catch (Exception e) {
-            sendJson(ex, 500, "{\"error\":\"Внутренняя ошибка сервера\"}");
+            sendError(ex, 500, "Внутренняя ошибка сервера");
         }
     }
 
@@ -51,27 +57,14 @@ public class MoviesHandler extends BaseHttpHandler {
             title = extractTitle(body);
             year = extractYear(body);
         } catch (IllegalArgumentException e) {
-            sendJson(ex, 400, """
-                    {
-                    "error": "Неверный JSON"
-                    }
-                    """);
+            sendError(ex, 400, "Неверный JSON");
             return;
         }
 
         try {
             validateMovie(title, year);
         } catch (ValidationException e) {
-            String details = e.getErrors().stream()
-                    .map(s -> "\"" + s + "\"")
-                    .collect(Collectors.joining(", "));
-
-            sendJson(ex, 422, """
-                    {
-                    "error": "Ошибка валидации",
-                    "details": [%s]
-                    }
-                    """.formatted(details));
+            sendValidationError(ex, e.getErrors());
             return;
         }
 
@@ -81,10 +74,7 @@ public class MoviesHandler extends BaseHttpHandler {
 
         Movie saved = repo.add(movie);
 
-        String json = String.format(
-                "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
-                saved.id, saved.title, saved.year
-        );
+        String json = mapper.writeValueAsString(saved);
 
         sendJson(ex, 201, json);
     }
@@ -97,18 +87,13 @@ public class MoviesHandler extends BaseHttpHandler {
         String contentType = ex.getRequestHeaders().getFirst("Content-Type");
 
         if (contentType == null || !contentType.equalsIgnoreCase("application/json")) {
-            sendJson(ex, 415, """
-                    {
-                    "error": "Этот тип данных не поддерживается"
-                    }
-                    """);
+            sendError(ex, 415, "Неподдерживаемый Content-Type");
             throw new IllegalStateException();
         }
     }
 
     private String extractTitle(String body) throws IllegalArgumentException {
         try {
-            ObjectMapper mapper = new ObjectMapper();
             JsonNode node = mapper.readTree(body);
             if (!node.has("title") || node.get("title").isNull()) {
                 throw new IllegalArgumentException("нет названия");
@@ -121,7 +106,6 @@ public class MoviesHandler extends BaseHttpHandler {
 
     private int extractYear(String body) throws IllegalArgumentException {
         try {
-            ObjectMapper mapper = new ObjectMapper();
             JsonNode node = mapper.readTree(body);
             if (!node.has("year") || node.get("year").isNull()) {
                 throw new IllegalArgumentException("нет года");
@@ -175,39 +159,32 @@ public class MoviesHandler extends BaseHttpHandler {
             return;
         }
 
-        sendJson(ex, 404, "{\"error\":\"Не найдено\"}");
+        sendError(ex, 404, "Не найдено");
     }
 
     private void handleGetAll(HttpExchange ex) throws IOException {
-        String json = repo.findAll().stream()
-                .map(m -> String.format(
-                        "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
-                        m.id, m.title, m.year))
-                .collect(Collectors.joining(",", "[", "]"));
+        String json = mapper.writeValueAsString(repo.findAll());
         sendJson(ex, 200, json);
     }
 
     private void handleGetById(HttpExchange ex, String idStr) throws IOException {
         long id;
 
-        try{
+        try {
             id = Long.parseLong(idStr);
         } catch (NumberFormatException e) {
-            sendJson(ex, 400, "{\"error\":\"Некорректный ID\"}");
+            sendError(ex, 400, "Некорректный ID");
             return;
         }
 
         Movie movie = repo.findById(id);
 
         if (movie == null) {
-            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            sendError(ex, 404, "Фильм не найден");
             return;
         }
 
-        String json = String.format(
-                "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
-                movie.id, movie.title, movie.year
-        );
+        String json = mapper.writeValueAsString(movie);
 
         sendJson(ex, 200, json);
     }
@@ -218,15 +195,11 @@ public class MoviesHandler extends BaseHttpHandler {
         try {
             year = Integer.parseInt(query.substring("year=".length()));
         } catch (NumberFormatException e) {
-            sendJson(ex, 400, "{\"error\":\"Некорректный параметр запроса - 'year'\"}");
+            sendError(ex, 400, "Некорректный параметр запроса - 'year'");
             return;
         }
 
-        String json = repo.findByYear(year).stream()
-                .map(m -> String.format(
-                        "{\"id\":%d,\"title\":\"%s\",\"year\":%d}",
-                        m.id, m.title, m.year))
-                .collect(Collectors.joining(",", "[", "]"));
+        String json = mapper.writeValueAsString(repo.findByYear(year));
 
         sendJson(ex, 200, json);
     }
@@ -236,7 +209,7 @@ public class MoviesHandler extends BaseHttpHandler {
         String[] parts = path.split("/");
 
         if (parts.length != 3) {
-            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            sendError(ex, 404, "Фильм не найден");
             return;
         }
 
@@ -244,23 +217,17 @@ public class MoviesHandler extends BaseHttpHandler {
         try {
             id = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
-            sendJson(ex, 400, "{\"error\":\"Некорректный ID\"}");
+            sendError(ex, 400, "Некорректный ID");
             return;
         }
 
         boolean deleted = repo.deleteById(id);
 
         if (!deleted) {
-            sendJson(ex, 404, "{\"error\":\"Фильм не найден\"}");
+            sendError(ex, 404, "Фильм не найден");
             return;
         }
 
         sendNoContent(ex);
     }
-
-    protected void sendNoContent(HttpExchange ex) throws IOException {
-        ex.getResponseHeaders().set("Content-Type", "application/json");
-        ex.sendResponseHeaders(204, -1);
-    }
-
 }

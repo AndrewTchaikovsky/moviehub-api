@@ -33,4 +33,10 @@ public class MovieRepository {
                 .filter(m -> m.year == year)
                 .toList();
     }
+
+    public void clear() {
+        movies.clear();
+        nextId = 1;
+    }
+
 }

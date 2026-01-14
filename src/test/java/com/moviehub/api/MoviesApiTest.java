@@ -1,8 +1,10 @@
 package com.moviehub.api;
 
+import com.moviehub.handler.MoviesHandler;
 import com.moviehub.server.MoviesServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.net.URI;
@@ -12,8 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class MoviesApiTest {
     private static final String BASE = "http://localhost:8080"; // !!! добавьте базовую часть URL
@@ -58,6 +59,11 @@ public class MoviesApiTest {
                 .connectTimeout(Duration.ofSeconds(2))
                 .build();
 
+    }
+
+    @BeforeEach
+    void clearRepository() {
+        MoviesHandler.getRepository().clear();
     }
 
     @AfterAll
@@ -234,11 +240,11 @@ public class MoviesApiTest {
     @Test
     void getMovieById_whenExists_returnsMovie() throws Exception {
         String json = """
-                {
-                "title": "Матрица",
-                "year": 1999
-                }
-        """;
+                        {
+                        "title": "Матрица",
+                        "year": 1999
+                        }
+                """;
 
         HttpResponse<String> postResp = post(json);
         assertEquals(201, postResp.statusCode());
@@ -284,11 +290,11 @@ public class MoviesApiTest {
     @Test
     void deleteMovieById_whenExists_return204() throws Exception {
         String json = """
-                {
-                "title": "Терминатор",
-                "year": 1984
-                }
-        """;
+                        {
+                        "title": "Терминатор",
+                        "year": 1984
+                        }
+                """;
 
         HttpResponse<String> postResp = post(json);
         assertEquals(201, postResp.statusCode());
@@ -364,7 +370,7 @@ public class MoviesApiTest {
         assertEquals(200, resp.statusCode());
         assertTrue(resp.body().contains("Начало"));
         assertTrue(resp.body().contains("2010"));
-        assertTrue(resp.body().contains("Матрица"));
+        assertFalse(resp.body().contains("Матрица"));
     }
 
     @Test
@@ -391,6 +397,71 @@ public class MoviesApiTest {
 
         assertEquals(400, resp.statusCode());
         assertTrue(resp.body().contains("Некорректный параметр запроса"));
+    }
+
+    @Test
+    void getMovieByYear_whenYearIsNotNumber_returns400() throws Exception {
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies?year=abc"))
+                .GET()
+                .build();
+
+        HttpResponse<String> resp = client.send(get, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(400, resp.statusCode());
+        assertTrue(resp.body().contains("year"));
+    }
+
+    @Test
+    void getMoviesByYear_whenYearIsEmpty_returns400() throws Exception {
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies?year="))
+                .GET()
+                .build();
+
+        HttpResponse<String> resp = client.send(get, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(400, resp.statusCode());
+    }
+
+    @Test
+    void getMovieByYear_whenUnknownQueryParam_IgnoresIt() throws Exception {
+        post("""
+                {
+                "title": "Начало",
+                "year": 2010
+                }
+                """);
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies?notyear=2010"))
+                .GET()
+                .build();
+
+        HttpResponse<String> resp = client.send(get, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(200, resp.statusCode());
+        assertTrue(resp.body().contains("Начало"));
+    }
+
+    @Test
+    void getMoviesByYear_whenNoMoviesFound_returnsEmptyArray() throws Exception {
+        post("""
+                {
+                "title": "Начало",
+                "year": 2010
+                }
+                """);
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/movies?year=2000"))
+                .GET()
+                .build();
+
+        HttpResponse<String> resp = client.send(get, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertEquals(200, resp.statusCode());
+        assertEquals("[]", resp.body());
     }
 
 }
